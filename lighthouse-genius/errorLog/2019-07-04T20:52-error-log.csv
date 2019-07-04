@@ -1,0 +1,6 @@
+desktop,resumegenius.com,name,LHError,code,INVALID_URL,friendlyMessage,lighthouse-core/lib/lh-error.js | urlInvalid # 0,lhrRuntimeError,
+mobile,resumegenius.com,name,LHError,code,INVALID_URL,friendlyMessage,lighthouse-core/lib/lh-error.js | urlInvalid # 0,lhrRuntimeError,
+mobile,kickresume.com,name,LHError,code,INVALID_URL,friendlyMessage,lighthouse-core/lib/lh-error.js | urlInvalid # 0,lhrRuntimeError,
+desktop,kickresume.com,name,LHError,code,INVALID_URL,friendlyMessage,lighthouse-core/lib/lh-error.js | urlInvalid # 0,lhrRuntimeError,
+desktop,thebalancecareers.com,name,LHError,code,INVALID_URL,friendlyMessage,lighthouse-core/lib/lh-error.js | urlInvalid # 0,lhrRuntimeError,
+mobile,thebalancecareers.com,name,LHError,code,INVALID_URL,friendlyMessage,lighthouse-core/lib/lh-error.js | urlInvalid # 0,lhrRuntimeError,

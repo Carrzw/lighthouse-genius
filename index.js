@@ -1,12 +1,12 @@
-const puppeteer = require('puppeteer');
+const cluster = require('cluster');
+const fs      = require('fs');
+const { URL } = require('url');
 
+const puppeteer = require('puppeteer');
 const lighthouse = require('lighthouse');
 
 const csvParse     = require('csv-parse/lib/sync');
 const csvStringify = require('csv-stringify/lib/sync');
-
-const fs      = require('fs');
-const { URL } = require('url');
 
 // lighthouse result return both "title"(for display) and "name", we use name as key for mapping data later
 // const categoriesauditsNameTitleMap
@@ -61,9 +61,7 @@ Object.keys({ ...categoriesNameTitleMap, ...auditsNameTitleMap }).forEach((eleme
 let config = {
   extends:  'lighthouse:default',
   settings: {
-    // onlyAudits: Object.keys(auditsNameTitleMap),
     throttlingMethod: 'simulate',
-    // https://github.com/GoogleChrome/lighthouse/blob/656b9b1934ca34f87e0f823c4b6f961af5c94112/lighthouse-core/report/html/renderer/util.js
   },
   passes: [
     {
@@ -72,33 +70,39 @@ let config = {
   ]
 };
 
-const startTime = Date.now();
+const outputDirName = 'output';
+const errLogDirName = 'errorLog';
+
+const maxCountOfWorkers = 4;
+
+// Above are global which could access both by master and worker
 
 module.exports = function(inputFilePath) {
-  (async() => {
+  cluster.isMaster ? masterTask(inputFilePath) : workerTask();
+}
 
-    input = fs.readFileSync(inputFilePath, { encoding: 'utf8' });
-    
+const masterTask = (inputFilePath) => {
+  (async() => {
+    try {
+      input = fs.readFileSync(inputFilePath, { encoding: 'utf8' });  
+    } catch (e) {
+      console.log(e);
+      console.log("Make sure \"input.csv\" is provided in the folder.");
+    }
+    const startTime = Date.now();
     const auditTargets = csvParse(input, {
       columns:          true,
       skip_empty_lines: true,
       trim:             true,
     });
-    const totalTasks   = auditTargets.length;
-    let countingDown   = totalTasks;
 
-    const executablePath = process.pkg ? puppeteer.executablePath().replace(__dirname, '.') : puppeteer.executablePath();
-    // Use Puppeteer to launch headful Chrome and don't use its default 800x600 viewport.
-    const browser = await puppeteer.launch({
-      // executablePath:  './node_modules/puppeteer/.local-chromium/mac-662092/chrome-mac/Chromium.app/Contents/MacOS/Chromium',
-      executablePath,
-      headless:        true,
-      args:            ['--no-sandbox', '--disable-setuid-sandbox'],
-      defaultViewport: null,
-    });
-    const lighthousePort = new URL(browser.wsEndpoint()).port;
-    const genDateTime    = new Date().toISOString();
-    const writeStream    = fs.createWriteStream(`${genDateTime.slice(0, 16)}.csv`);
+    const totalTasks = auditTargets.length;
+    const clock = new Date();
+    const genDateTime = new Date(clock.getTime() - (clock.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+    createOutputDir(outputDirName);
+    createOutputDir(errLogDirName);
+    const writeStream = fs.createWriteStream(`./${outputDirName}/${genDateTime}.csv`);
+    const errLogWriteStream = fs.createWriteStream(`./${errLogDirName}/${genDateTime}-error-log.csv`);
 
     const header = Object.values(auditsNameTitleMap);
     header.unshift(...Object.values(categoriesNameTitleMap));
@@ -107,48 +111,119 @@ module.exports = function(inputFilePath) {
     const headerRow = csvStringify([header], { delimiter: ',' });
     writeStream.write(headerRow);
 
-    for (const target of auditTargets) {
+    const deliverTask = (worker) => {
+      console.log(`Total: ${totalTasks} || Current: ${auditTargets.length}`);
+      const newTask = auditTargets.shift();
+      console.log(`Device = ${newTask.Device} || URL = ${newTask.URL}`);
+      worker.send({ target: newTask });
+    };
 
-      console.log(`Device = ${target.Device} || URL = ${target.URL}`);
-      console.log(`Total: ${totalTasks} || Current: ${countingDown--}`);
+    cluster.on('online', (worker) => {
+      deliverTask(worker);
+    });
 
-      const resultRow = [target[`${inputColumnsHeader[0]}`], target[`${inputColumnsHeader[1]}`]];
-      try {
-        config.settings.emulatedFormFactor = target.Device;
-        const { lhr } = await lighthouse(target.URL, { port: lighthousePort }, config);
-        const csv     = generateReportCSV(lhr);
-        const result  = csvParse(csv, {
-          columns:          true,
-          skip_empty_lines: true,
-          trim:             true,
-        });
-
-        result.forEach(item => {
-          let position        = orderMap[item.name];
-          resultRow[position] = item.displayValue;
-        });
-
-        Object.keys(lhr.categories).forEach(ck => {
-          let position        = orderMap[ck];
-          resultRow[position] = lhr.categories[ck].score;
-        });
-
-      } catch (e) {
-        console.log(e);
-      } finally {
-        const csvResult = csvStringify([resultRow], { delimiter: ',' });
+    cluster.on('message', (worker, { csvResult, error }) => {
+      if (error) {
+        errLogWriteStream.write(error);
+      } else {
         writeStream.write(csvResult);
       }
-    }
+      
+      if (auditTargets.length !== 0) {
+        deliverTask(worker);  
+      } else {
+        worker.kill();
+      }
+    });
 
-    return { browser, writeStream };
-  })().then(async (resources) => {
-    const elapsed    = Date.now() - startTime;
-    const difference = new Date(elapsed);
-    console.log(`Total time to accomplish all tasks: ${difference.getHours()} hours ${difference.getMinutes()} minutes`);
-    resources.browser.close();
-    resources.writeStream.end();
+    cluster.on('exit', (worker, code, signal) => {
+      if (auditTargets.length !== 0) {
+        cluster.fork();
+      }
+      if (Object.keys(cluster.workers).length === 0) {
+        writeStream.end();
+        errLogWriteStream.end();
+        const elapsed = Date.now() - startTime;
+        const totalTimeInSeconds = elapsed / 1000;
+        const seconds = Math.floor(totalTimeInSeconds % 60);
+        const minutes = Math.floor(totalTimeInSeconds / 60);
+        console.log(`Total time to accomplish all tasks: ${minutes} minutes ${seconds} seconds`);
+      }
+    });
+
+    for (let i = 0; i < maxCountOfWorkers; i++) {
+      cluster.fork();
+    }
+  })();
+}
+
+const workerTask = () => {
+  process.on('message', ({ target }) => {
+      (async() => {
+        const executablePath = process.pkg ?
+          puppeteer.executablePath().replace(__dirname, './bundle') :
+          puppeteer.executablePath();
+
+        const browser = await puppeteer.launch({
+          executablePath,
+          headless:        true,
+          args:            ['--no-sandbox', '--disable-setuid-sandbox'],
+          defaultViewport: null,
+        });
+
+        const lighthousePort = new URL(browser.wsEndpoint()).port;
+        const resultRow = [target[`${inputColumnsHeader[0]}`], target[`${inputColumnsHeader[1]}`]];
+
+        const result = {
+          csvResult: undefined,
+          error:     undefined,
+        };
+
+        try {
+          config.settings.emulatedFormFactor = target.Device;
+          const { lhr } = await lighthouse(target.URL, { port: lighthousePort }, config);
+          const csv = generateReportCSV(lhr);
+          const csvParseResult = csvParse(csv, {
+            columns:          true,
+            skip_empty_lines: true,
+            trim:             true,
+          });
+
+          csvParseResult.forEach(item => {
+            let position        = orderMap[item.name];
+            resultRow[position] = item.displayValue;
+          });
+
+          Object.keys(lhr.categories).forEach(ck => {
+            let position        = orderMap[ck];
+            resultRow[position] = lhr.categories[ck].score;
+          });
+        } catch (e) {
+          console.log(e);
+          const errorPairs = [resultRow[0], resultRow[1]];
+          Object.entries(e).forEach(([key, value]) => {
+            errorPairs.push(key, value);
+          });
+          const errResult = csvStringify([errorPairs], { delimiter: ',' }); 
+          result.error = errResult;
+        } finally {
+          browser.close();
+          const csvResult = csvStringify([resultRow], { delimiter: ',' }); 
+          result.csvResult = csvResult;
+          process.send(result);
+        }
+    })();
   });
+}
+
+const createOutputDir = (dir) => {
+  try {
+    if (!fs.existsSync(dir)){
+      fs.mkdirSync(dir)
+    }
+  } catch (err) {
+    console.error(err)
+  }
 }
 
 const normalizeResult = (value) => {
@@ -162,10 +237,7 @@ const generateReportCSV = (lhr) => {
   // The document describes how to deal with escaping commas and quotes etc.
   const CRLF      = '\r\n';
   const separator = ',';
-  /** @param {string} value @returns {string} */
   const escape = value => `"${value.replace(/"/g, '""')}"`;
-
-  // Possible TODO: tightly couple headers and row values
   const header = ['category', 'name', 'title', 'type', 'score', 'displayValue'];
   const table = Object.values(lhr.categories).map(category => {
     return category.auditRefs.map(auditRef => {

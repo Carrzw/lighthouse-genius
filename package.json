@@ -2,6 +2,7 @@
   "name": "lighthouse-genius",
   "version": "1.0.0",
   "main": "index.js",
+  "bin": "bin.js",
   "repository": "https://github.com/Carrzw/lighthouse-genius.git",
   "author": "Carr",
   "license": "MIT",
@@ -10,5 +11,35 @@
     "csv": "^5.1.1",
     "lighthouse": "^4.2.0",
     "puppeteer": "^1.13.0"
+  },
+  "scripts": {
+    "pkg": "rm -rf ./lighthouse-genius && pkg -t node10-macos-x64 --out-path lighthouse-genius/bundle .",
+    "postpkg": "mkdir -p ./lighthouse-genius/bundle/node_modules/puppeteer && cp -R ./node_modules/puppeteer/.local-chromium ./lighthouse-genius/bundle/node_modules/puppeteer"
+  },
+  "pkg" : { 
+    "scripts":[ 
+      "node_modules/lighthouse/lighthouse-core/report/html/html-report-assets.js",
+      "node_modules/lighthouse/lighthouse-core/report/html/renderer/*",
+      "node_modules/lighthouse/lighthouse-core/lib/file-namer.js",
+      "node_modules/lighthouse/lighthouse-core/gather/gatherers/*",
+      "node_modules/lighthouse/lighthouse-core/gather/gatherers/seo/*",
+      "node_modules/lighthouse/lighthouse-core/gather/gatherers/dobetterweb/*",
+      "node_modules/lighthouse/lighthouse-core/audits/*",
+      "node_modules/lighthouse/lighthouse-core/audits/manual/*",
+      "node_modules/lighthouse/lighthouse-core/audits/dobetterweb/*",
+      "node_modules/lighthouse/lighthouse-core/audits/metrics/*",
+      "node_modules/lighthouse/lighthouse-core/audits/seo/*",
+      "node_modules/lighthouse/lighthouse-core/audits/seo/manual/*",
+      "node_modules/lighthouse/lighthouse-core/audits/accessibility/*",
+      "node_modules/lighthouse/lighthouse-core/audits/accessibility/manual/*",
+      "node_modules/lighthouse/lighthouse-core/audits/byte-efficiency/*",
+      "node_modules/lighthouse/lighthouse-core/config/*",
+      "node_modules/puppeteer/lib/*.js"
+    ],
+    "assets": [ 
+      "node_modules/lighthouse/lighthouse-core/report/html/report-template.html",
+      "node_modules/lighthouse/lighthouse-core/report/html/report-styles.css",
+      "node_modules/lighthouse/lighthouse-core/report/html/templates.html"
+    ]
   }
 }
