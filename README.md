@@ -16,4 +16,4 @@ Also to make this tool convenient enough for non-developers to use, wrapping it 
 
 ## Developer
 
-`node bin.js input.csv` 
+`node bin.js assets/input.csv` 

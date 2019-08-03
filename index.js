@@ -1,15 +1,14 @@
-const cluster = require('cluster');
-const fs      = require('fs');
+const fs = require('fs');
 const { URL } = require('url');
+const cluster = require('cluster');
 
 const puppeteer = require('puppeteer');
 const lighthouse = require('lighthouse');
 
-const csvParse     = require('csv-parse/lib/sync');
+const csvParse = require('csv-parse/lib/sync');
 const csvStringify = require('csv-stringify/lib/sync');
 
 // lighthouse result return both "title"(for display) and "name", we use name as key for mapping data later
-// const categoriesauditsNameTitleMap
 
 const categoriesNameTitleMap = {
   'performance':    'Performance',
@@ -51,12 +50,11 @@ const auditsNameTitleMap = {
 
 const inputColumnsHeader = ['Device', 'URL'];
 // use orderMap to record the index of each "name", lighthouse result 
-// from target urls could use this index to find correct column
+// from target urls could use this index to find correct column.
 const orderMap = {};
 Object.keys({ ...categoriesNameTitleMap, ...auditsNameTitleMap }).forEach((element, i) => {
   orderMap[element] = i + inputColumnsHeader.length;
 });
-
 
 let config = {
   extends:  'lighthouse:default',
@@ -97,10 +95,10 @@ const masterTask = (inputFilePath) => {
     });
 
     const totalTasks = auditTargets.length;
-    const clock = new Date();
-    const genDateTime = new Date(clock.getTime() - (clock.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
     createOutputDir(outputDirName);
     createOutputDir(errLogDirName);
+    const clock = new Date();
+    const genDateTime = new Date(clock.getTime() - (clock.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
     const writeStream = fs.createWriteStream(`./${outputDirName}/${genDateTime}.csv`);
     const errLogWriteStream = fs.createWriteStream(`./${errLogDirName}/${genDateTime}-error-log.csv`);
 
@@ -159,12 +157,20 @@ const masterTask = (inputFilePath) => {
 
 const workerTask = () => {
   process.on('message', ({ target }) => {
-      (async() => {
+    (async() => {
+      let browser;
+      const resultRow = [target[`${inputColumnsHeader[0]}`], target[`${inputColumnsHeader[1]}`]];
+      const result = {
+        csvResult: undefined,
+        error:     undefined,
+      };
+
+      try {
         const executablePath = process.pkg ?
           puppeteer.executablePath().replace(__dirname, './bundle') :
           puppeteer.executablePath();
 
-        const browser = await puppeteer.launch({
+        browser = await puppeteer.launch({
           executablePath,
           headless:        true,
           args:            ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -172,46 +178,38 @@ const workerTask = () => {
         });
 
         const lighthousePort = new URL(browser.wsEndpoint()).port;
-        const resultRow = [target[`${inputColumnsHeader[0]}`], target[`${inputColumnsHeader[1]}`]];
+        config.settings.emulatedFormFactor = target.Device;
+        const { lhr } = await lighthouse(target.URL, { port: lighthousePort }, config);
+        const csv = generateReportCSV(lhr);
+        const csvParseResult = csvParse(csv, {
+          columns:          true,
+          skip_empty_lines: true,
+          trim:             true,
+        });
 
-        const result = {
-          csvResult: undefined,
-          error:     undefined,
-        };
+        csvParseResult.forEach(item => {
+          let position = orderMap[item.name];
+          resultRow[position] = item.displayValue;
+        });
 
-        try {
-          config.settings.emulatedFormFactor = target.Device;
-          const { lhr } = await lighthouse(target.URL, { port: lighthousePort }, config);
-          const csv = generateReportCSV(lhr);
-          const csvParseResult = csvParse(csv, {
-            columns:          true,
-            skip_empty_lines: true,
-            trim:             true,
-          });
-
-          csvParseResult.forEach(item => {
-            let position        = orderMap[item.name];
-            resultRow[position] = item.displayValue;
-          });
-
-          Object.keys(lhr.categories).forEach(ck => {
-            let position        = orderMap[ck];
-            resultRow[position] = lhr.categories[ck].score;
-          });
-        } catch (e) {
-          console.log(e);
-          const errorPairs = [resultRow[0], resultRow[1]];
-          Object.entries(e).forEach(([key, value]) => {
-            errorPairs.push(key, value);
-          });
-          const errResult = csvStringify([errorPairs], { delimiter: ',' }); 
-          result.error = errResult;
-        } finally {
-          browser.close();
-          const csvResult = csvStringify([resultRow], { delimiter: ',' }); 
-          result.csvResult = csvResult;
-          process.send(result);
-        }
+        Object.keys(lhr.categories).forEach(categoryKey => {
+          let position = orderMap[categoryKey];
+          resultRow[position] = lhr.categories[categoryKey].score;
+        });
+      } catch (e) {
+        console.log(e);
+        const errorPairs = [resultRow[0], resultRow[1]];
+        Object.entries(e).forEach(([key, value]) => {
+          errorPairs.push(key, value);
+        });
+        const errResult = csvStringify([errorPairs], { delimiter: ',' }); 
+        result.error = errResult;
+      } finally {
+        browser.close();
+        const csvResult = csvStringify([resultRow], { delimiter: ',' }); 
+        result.csvResult = csvResult;
+        process.send(result);
+      }
     })();
   });
 }
@@ -235,7 +233,7 @@ const normalizeResult = (value) => {
 const generateReportCSV = (lhr) => {
   // To keep things "official" we follow the CSV specification (RFC4180)
   // The document describes how to deal with escaping commas and quotes etc.
-  const CRLF      = '\r\n';
+  const CRLF = '\r\n';
   const separator = ',';
   const escape = value => `"${value.replace(/"/g, '""')}"`;
   const header = ['category', 'name', 'title', 'type', 'score', 'displayValue'];
@@ -250,7 +248,5 @@ const generateReportCSV = (lhr) => {
         .map(escape);
     });
   });
-
-  return [header].concat(...table)
-    .map(row => row.join(separator)).join(CRLF);
+  return [header].concat(...table).map(row => row.join(separator)).join(CRLF);
 }

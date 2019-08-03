@@ -14,7 +14,7 @@
   },
   "scripts": {
     "pkg": "rm -rf ./lighthouse-genius && pkg -t node10-macos-x64 --out-path lighthouse-genius/bundle .",
-    "postpkg": "mkdir -p ./lighthouse-genius/bundle/node_modules/puppeteer && cp -R ./node_modules/puppeteer/.local-chromium ./lighthouse-genius/bundle/node_modules/puppeteer"
+    "postpkg": "mkdir -p ./lighthouse-genius/bundle/node_modules/puppeteer && cp -R ./node_modules/puppeteer/.local-chromium ./lighthouse-genius/bundle/node_modules/puppeteer && cp ./assets/exe.sh ./lighthouse-genius"
   },
   "pkg" : { 
     "scripts":[ 
